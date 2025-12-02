@@ -2,10 +2,12 @@ import streamlit as st
 import tensorflow as tf
 import pickle
 import numpy as np
+import pandas as pd
+import plotly.express as px
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import os
 
-# Load Model and Tokenizer
+# Load Model and Tokenizer (Cached)
 @st.cache_resource
 def load_assets():
     # Paths
@@ -21,122 +23,133 @@ def load_assets():
         tokenizer = pickle.load(handle)
     return model, tokenizer
 
+def predict_sentiment(text, model, tokenizer):
+    max_len = 100
+    sequences = tokenizer.texts_to_sequences([text])
+    padded = pad_sequences(sequences, maxlen=max_len)
+    prediction = model.predict(padded)
+    
+    output_shape = model.output_shape
+    sentiment = "Unknown"
+    
+    if output_shape[-1] == 1:
+        score = prediction[0][0]
+        sentiment = "Positif" if score > 0.5 else "Negatif"
+    else:
+        # Assuming 2 classes: Negatif, Positif
+        classes = ['Negatif', 'Positif']
+        class_idx = np.argmax(prediction)
+        if class_idx < len(classes):
+            sentiment = classes[class_idx]
+            
+    return sentiment
+
 @st.fragment
 def display_header():
-    st.title("🛍️ Analisis Sentimen Ulasan Produk")
-    st.markdown("Aplikasi ini menggunakan **Deep Learning (LSTM)** untuk memprediksi sentimen dari ulasan produk bahasa Indonesia.")
+    st.title("Manual Sentiment Analysis")
+    st.markdown("Masukkan ulasan secara manual untuk dianalisis sentimennya.")
 
 @st.fragment
-def display_input_and_result(model, tokenizer):
-    # Input Section
-    st.subheader("Masukkan Ulasan")
-    review_text = st.text_area(
-        "Tulis ulasan produk di sini:",
-        height=150,
-        placeholder="Contoh: Barang sangat bagus, pengiriman cepat, saya sangat puas!"
-    )
+def display_input_section(model, tokenizer):
+    # Initialize session state for storing queries if not exists
+    if 'history' not in st.session_state:
+        st.session_state.history = []
 
-    if st.button("Analisis Sentimen"):
-        if review_text.strip():
-            with st.spinner('Menganalisis...'):
-                try:
-                    # Preprocessing
-                    max_len = 100 # Must match the training max_len
-                    sequences = tokenizer.texts_to_sequences([review_text])
-                    padded = pad_sequences(sequences, maxlen=max_len)
+    tab1, tab2 = st.tabs(["Input Manual", "Upload CSV"])
+
+    with tab1:
+        with st.form("sentiment_form", clear_on_submit=True):
+            user_input = st.text_area("Masukkan Ulasan:", placeholder="Contoh: Barangnya bagus banget, pengiriman cepat!")
+            submitted = st.form_submit_button("Analisis")
+            
+            if submitted and user_input:
+                sentiment = predict_sentiment(user_input, model, tokenizer)
+                st.session_state.history.append({
+                    "Ulasan": user_input,
+                    "Sentimen": sentiment
+                })
+                st.success(f"Hasil: {sentiment}")
+
+    with tab2:
+        uploaded_file = st.file_uploader("Upload file CSV", type=['csv'])
+        if uploaded_file is not None:
+            try:
+                df_upload = pd.read_csv(uploaded_file)
+                st.write("Preview Data:")
+                st.dataframe(df_upload.head())
+                
+                text_col = st.selectbox("Pilih kolom ulasan:", df_upload.columns)
+                
+                if st.button("Proses CSV"):
+                    progress_bar = st.progress(0, text="Menganalisis...")
+                    total = len(df_upload)
+                    results = []
                     
-                    # Prediction
-                    prediction = model.predict(padded)
-                    
-                    # Interpret result
-                    output_shape = model.output_shape
-                    
-                    sentiment = ""
-                    confidence = 0.0
-                    
-                    # Binary Classification (Sigmoid)
-                    if output_shape[-1] == 1:
-                        score = prediction[0][0]
-                        sentiment = "Positif" if score > 0.5 else "Negatif"
-                        confidence = score if score > 0.5 else 1 - score
-                    
-                    # Multiclass Classification (Softmax)
-                    else:
-                        class_idx = np.argmax(prediction)
-                        confidence = np.max(prediction)
+                    for i, text in enumerate(df_upload[text_col]):
+                        # Ensure text is string
+                        text_str = str(text) if pd.notna(text) else ""
+                        if text_str.strip():
+                            sentiment = predict_sentiment(text_str, model, tokenizer)
+                            results.append({
+                                "Ulasan": text_str,
+                                "Sentimen": sentiment
+                            })
                         
-                        # Mapping classes (Assuming alphabetical order from LabelEncoder)
-                        if output_shape[-1] == 2:
-                            classes = ['Negatif', 'Positif']
-                        elif output_shape[-1] == 3:
-                            classes = ['Negatif', 'Netral', 'Positif']
-                        else:
-                            classes = [f'Kelas {i}' for i in range(output_shape[-1])]
-                            
-                        if class_idx < len(classes):
-                            sentiment = classes[class_idx]
-                        else:
-                            sentiment = f"Kelas {class_idx}"
+                        # Update progress every 10 items or at the end
+                        if (i + 1) % 10 == 0 or (i + 1) == total:
+                            progress_bar.progress((i + 1) / total, text=f"Menganalisis {i+1}/{total}")
+                    
+                    # Add to history
+                    st.session_state.history.extend(results)
+                    progress_bar.empty()
+                    st.success(f"Berhasil memproses {len(results)} ulasan!")
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Error processing CSV: {e}")
 
-                    # Display Result
-                    st.markdown("---")
-                    st.subheader("Hasil Analisis")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.metric("Sentimen", sentiment)
-                    
-                    with col2:
-                        st.metric("Confidence Score", f"{confidence:.2%}")
-                    
-                    # Visual Feedback
-                    if sentiment.lower() == "positif":
-                        st.success("Ulasan ini bernada **Positif**! 😄")
-                        st.balloons()
-                    elif sentiment.lower() == "negatif":
-                        st.error("Ulasan ini bernada **Negatif**. 😔")
-                    else:
-                        st.info(f"Ulasan ini bernada **{sentiment}**.")
-                        
-                except Exception as e:
-                    st.error(f"Error during prediction: {e}")
-        else:
-            st.warning("Mohon masukkan teks ulasan terlebih dahulu.")
+    # Display Data and Chart if history exists
+    if st.session_state.history:
+        st.divider()
+        st.subheader("Riwayat Analisis")
+        
+        # Create DataFrame
+        df = pd.DataFrame(st.session_state.history)
+        
+        # Layout: Table on left, Chart on right
+        col1, col2 = st.columns([3, 2])
+        
+        with col1:
+            st.dataframe(df, use_container_width=True)
+            
+            if st.button("Hapus Riwayat"):
+                st.session_state.history = []
+                st.rerun()
 
-
-def display_sidebar():
-    st.sidebar.title("Tentang")
-    st.sidebar.info(
-        "Aplikasi ini didukung oleh model LSTM yang dilatih menggunakan dataset PRDECT-ID."
-    )
+        with col2:
+            # Pie Chart
+            sentiment_counts = df['Sentimen'].value_counts().reset_index()
+            sentiment_counts.columns = ['Sentimen', 'Jumlah']
+            
+            fig = px.pie(
+                sentiment_counts, 
+                values='Jumlah', 
+                names='Sentimen', 
+                title='Distribusi Sentimen',
+                color='Sentimen',
+                color_discrete_map={'Positif': 'green', 'Negatif': 'red'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 def main():
-    # Custom CSS
-    st.markdown("""
-    <style>
-        .stTextArea textarea {
-            font-size: 16px;
-        }
-        .stButton button {
-            width: 100%;
-            background-color: #FF4B4B;
-            color: white;
-            font-weight: bold;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
     try:
         model, tokenizer = load_assets()
     except Exception as e:
-        st.error(f"Terjadi kesalahan saat memuat model: {e}")
-        st.info("Pastikan Anda telah menjalankan notebook `nlp.ipynb` untuk melatih dan menyimpan model.")
+        st.error(f"Error loading model: {e}")
         st.stop()
-
+        
     display_header()
-    display_input_and_result(model, tokenizer)
-    display_sidebar()
+    display_input_section(model, tokenizer)
 
 if __name__ == "__main__":
     main()
