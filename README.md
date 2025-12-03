@@ -1,6 +1,5 @@
 # Tutorial Streamlit
 
-Dokumen ini berisi panduan langkah demi langkah untuk membuat, mengelola, dan men-deploy aplikasi data science sederhana menggunakan Streamlit.
 
 ## 1. Persiapan Software & Akun
 
@@ -75,7 +74,7 @@ git branch -M main
 Jika Anda mengalami error saat menjalankan perintah git (seperti "Please tell me who you are"), jalankan perintah berikut untuk mengonfigurasi username dan email Anda:
 
 ```bash
-git config --global user.email "email_anda@example.com"
+git config --global user.email "email_anda@example.com" #email sama dengan yang di github
 git config --global user.name "Nama Anda"
 ```
 
